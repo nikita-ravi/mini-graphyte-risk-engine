@@ -4,3 +4,7 @@ scikit-learn
 streamlit
 joblib
 faker
+altair
+duckduckgo-search
+beautifulsoup4
+requests

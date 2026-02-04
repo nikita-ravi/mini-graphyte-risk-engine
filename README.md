@@ -9,8 +9,6 @@ Financial crime compliance teams are drowning in false positives. Traditional ke
 
 This project is a functional prototype of such a system, built to demonstrate the core architectural principles behind modern Risk Intelligence platforms like Graphyte.
 
-## 🔍 How This Mirrors Graphyte
-This demo was built to align with Quantifind’s philosophy: **Accuracy > Hype**.
 
 | Feature | Traditional Search | Mini Graphyte (This Demo) |
 |:---|:---|:---|

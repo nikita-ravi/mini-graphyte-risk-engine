@@ -3,9 +3,9 @@ import numpy as np
 import re
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
-from sklearn.pipeline import Pipeline
 import joblib
 import os
+from duckduckgo_search import DDGS
 
 class MiniGraphyteEngine:
     def __init__(self, data_dir="data"):
@@ -21,24 +21,19 @@ class MiniGraphyteEngine:
             print("Model not found. Training new model...")
             self.train_model()
             
-        # Load article database
-        self.articles_df = pd.read_csv(f"{data_dir}/article_db.csv")
+        # We NO LONGER load a static article_db.csv for live search
+        # We only use the training data to teach the model what "risk" looks like
         
     def normalize_name(self, name):
         """
         Simple entity resolution normalization.
-        - Lowercase
-        - Remove punctuation
-        - Remove legal suffixes (Ltd, LLC, Inc)
         """
         name = name.lower()
         name = re.sub(r'[^\w\s]', '', name)
-        
         suffixes = [" ltd", " llc", " inc", " corp", " limited", " holdings", " group"]
         for suffix in suffixes:
             if name.endswith(suffix):
                 name = name[:len(name)-len(suffix)]
-        
         return name.strip()
 
     def train_model(self):
@@ -47,11 +42,10 @@ class MiniGraphyteEngine:
         """
         train_path = f"{self.data_dir}/training_data.csv"
         if not os.path.exists(train_path):
-            raise FileNotFoundError(f"Training data not found at {train_path}")
+            raise FileNotFoundError(f"Training data not found at {train_path}. Please run data_generator.py first.")
             
         df = pd.read_csv(train_path)
         
-        # Create Pipeline
         self.vectorizer = TfidfVectorizer(stop_words='english', max_features=1000)
         X = self.vectorizer.fit_transform(df['text'])
         y = df['label']
@@ -59,95 +53,104 @@ class MiniGraphyteEngine:
         self.model = LogisticRegression(class_weight='balanced')
         self.model.fit(X, y)
         
-        # Save
         joblib.dump(self.model, self.model_path)
         joblib.dump(self.vectorizer, self.vectorizer_path)
         print("Model trained and saved.")
 
+    def fetch_live_news(self, entity_name, limit=10):
+        """
+        searches DuckDuckGo for live news about the entity.
+        Returns a list of dicts: {'headline', 'snippet', 'source', 'date', 'url'}
+        """
+        # Search query: "Entity Name" + typical risk keywords to cast a wide net
+        # We don't assume risk, but we want to see if any exist.
+        query = f'"{entity_name}" news' 
+        
+        results = []
+        try:
+            with DDGS() as ddgs:
+                ddgs_news = list(ddgs.news(query, max_results=limit))
+                
+                for r in ddgs_news:
+                    results.append({
+                        "headline": r.get('title', ''),
+                        "snippet": r.get('body', ''), # snippet
+                        "source": r.get('source', 'Web'),
+                        "date": r.get('date', 'Recent'),
+                        "url": r.get('url', '#')
+                    })
+        except Exception as e:
+            print(f"Error fetching news: {e}")
+            return []
+            
+        return results
+
     def calculate_risk_score(self, evidence):
         """
         Calculates risk score (0-100) based on evidence.
-        Formula: avg_risk_confidence * 0.5 + log(article_count + 1) * 0.3 + recency_score * 0.2
-        (Simplified implementation)
         """
         if not evidence:
             return 0
             
-        # 1. Avg Risk Confidence (for non-neutral articles)
         risk_articles = [e for e in evidence if e['predicted_risk'] != 'neutral']
         
         if not risk_articles:
-            return 0 # All news is neutral
+            return 0 
             
         avg_conf = np.mean([e['confidence'] for e in risk_articles])
-        
-        # 2. Volume Score
-        # Logarithmic scale for volume: log(count+1). Let's maximize it at ~10 articles -> score 1.0
-        # log(11) is ~2.4. So divide by 2.5 to normalize roughly.
         count = len(risk_articles)
         volume_score = min(np.log(count + 1) / 2.5, 1.0)
+        recency_score = 0.8 # Placeholder for live parsing
         
-        # 3. Recency (Not fully implemented in synthetic data dates accurately, so we'll mock it or use 1.0 for now)
-        # In a real system, decay score based on date.
-        recency_score = 0.8 
-        
-        # Weighted sum
-        # Weights: Confidence (50%), Volume (30%), Recency (20%)
-        # Result is 0-1 float.
         raw_score = (avg_conf * 0.5) + (volume_score * 0.3) + (recency_score * 0.2)
-        
         return int(min(raw_score * 100, 100))
 
     def analyze_entity(self, entity_name):
         """
         Core pipeline:
-        1. Resolve Entity
-        2. Fetch Articles
-        3. Classify Risks
-        4. Score
+        1. Live Web Search (OSINT)
+        2. Classify Risks (Inference)
+        3. Score
         """
-        normalized_query = self.normalize_name(entity_name)
+        # 1. Fetch Live Data
+        raw_articles = self.fetch_live_news(entity_name)
         
-        # 1. Search (Simulated Entity Resolution)
-        # We look for partial matches in the mock DB 'entity_name' column
-        # In a real Graphyte demo, this is the complex part. Here we keep it robust but simple.
-        matches = self.articles_df[self.articles_df['entity_name'].apply(lambda x: self.normalize_name(x)) == normalized_query]
-        
-        if matches.empty:
-            # Fallback fuzzy search or just return empty
-            # Let's try matching if query is substring of db entity
-            matches = self.articles_df[self.articles_df['entity_name'].apply(lambda x: normalized_query in self.normalize_name(x))]
-        
-        if matches.empty:
+        if not raw_articles:
             return {
                 "entity": entity_name,
                 "risk_score": 0,
-                "typologies": [],
+                "top_typologies": [],
                 "evidence": [],
-                "summary": "No adverse media found."
+                "summary": "No recent news found."
             }
             
         # 2. Classify Articles
         evidence_list = []
         typology_counts = {}
         
-        tfidf_features = self.vectorizer.transform(matches['snippet'])
+        if not raw_articles:
+             return None
+
+        snippets = [a['snippet'] + " " + a['headline'] for a in raw_articles]
+        tfidf_features = self.vectorizer.transform(snippets)
         predictions = self.model.predict(tfidf_features)
         probs = self.model.predict_proba(tfidf_features)
         
-        classes = self.model.classes_
-        
-        for idx, row in matches.reset_index().iterrows():
+        for idx, article in enumerate(raw_articles):
             pred_label = predictions[idx]
             confidence = np.max(probs[idx])
             
-            # Map neutral to 0 risk effectively, but we still store it
+            # Simple heuristic to reduce false positives from generic training data
+            # If confidence is low, classify as neutral
+            if confidence < 0.55:
+                pred_label = 'neutral'
             
             evidence_item = {
-                "headline": row['headline'],
-                "snippet": row['snippet'],
-                "source": row['source'],
-                "date": row['date'],
+                "headline": article['headline'],
+                "snippet": article['snippet'][:200] + "...",
+                "source": article['source'],
+                "date": article['date'],
+                "url": article['url'],
                 "predicted_risk": pred_label,
                 "confidence": round(confidence, 2)
             }
@@ -164,9 +167,9 @@ class MiniGraphyteEngine:
         top_typologies = [t[0] for t in sorted_typologies]
         
         return {
-            "entity": matches.iloc[0]['entity_name'], # Return the resolved name
+            "entity": entity_name,
             "risk_score": risk_score,
             "top_typologies": top_typologies,
             "evidence": evidence_list,
-            "summary": f"Found {len(matches)} articles. Primary risks: {', '.join(top_typologies[:2])}" if top_typologies else "No significant risks detected."
+            "summary": f"Analyzed {len(raw_articles)} articles."
         }
