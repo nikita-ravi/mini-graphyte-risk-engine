@@ -84,7 +84,7 @@ if analyze_btn and entity_query:
         st.warning(f"No adverse media found for **{entity_query}**.")
     else:
         # TABS for different viewpoints
-        tab1, tab2, tab3 = st.tabs(["📊 Executive Dashboard", "🧠 System Logic (Behind the Scenes)", "💡 Methodology & Differentiators"])
+        tab1, tab2, tab3, tab4 = st.tabs(["📊 Executive Dashboard", "🧠 System Logic", "📈 Model Quality (VP View)", "💡 Methodology"])
         
         # --- TAB 1: EXECUTIVE DASHBOARD ---
         with tab1:
@@ -126,10 +126,20 @@ if analyze_btn and entity_query:
                     risk = item['predicted_risk']
                     color_border = "#dc2626" if risk in ['sanctions', 'money_laundering'] else "#f59e0b" if risk != 'neutral' else "#cbd5e1"
                     
+                    # Explainability: Get top tokens
+                    explanation = engine.explain_prediction(item['snippet'], risk)
+                    explanation_html = ""
+                    if explanation:
+                        explanation_html = f"""
+                        <div style="margin-top:8px; font-size:0.85em; color:#0f172a; background:#f1f5f9; padding:5px 10px; border-radius:4px;">
+                            <b>🔍 Why?</b> Top risk indicators: <code style="color:#d97706">{'</code>, <code style="color:#d97706">'.join(explanation)}</code>
+                        </div>
+                        """
+                    
                     st.markdown(f"""
                     <div class="audit-card" style="border-left: 5px solid {color_border};">
                         <div style="display:flex; justify-content:space-between; align-items:center;">
-                            <span style="font-weight:600; font-size:1.05em;">{item['headline']}</span>
+                            <span style="font-weight:600; font-size:1.05em;"><a href="{item['url']}" target="_blank" style="text-decoration:none; color:#1e293b;">{item['headline']} 🔗</a></span>
                             <span style="background:{color_border}20; color:{color_border}; padding:2px 8px; border-radius:4px; font-weight:700; font-size:0.75em;">{risk.upper()}</span>
                         </div>
                         <div style="margin-top:5px; color:#64748b; font-size:0.9em;">
@@ -138,6 +148,7 @@ if analyze_btn and entity_query:
                         <div style="margin-top:8px; font-style:italic; color:#334155;">
                             "{item['snippet']}"
                         </div>
+                        {explanation_html}
                     </div>
                     """, unsafe_allow_html=True)
 
@@ -169,9 +180,9 @@ if analyze_btn and entity_query:
             st.code(f"""
             Raw Input:       "{entity_query}"
             Normalization:   "{entity_query.lower().replace('.', '').replace(' ltd', '')}" (Stripped Legal Suffixes)
-            Match Logic:     Fuzzy Token Ratio > 90% OR Substring Match in Knowledge Graph
-            Result:          MATCH FOUND -> ID: {result['entity']}
-            """, language="python")
+            Match Logic:     DuckDuckGo Search -> '{entity_query} news'
+            Result:          Ingested {len(result['evidence'])} Live Articles
+            """, language="json")
 
             st.markdown("#### 2. Scoring Algorithm (The Math)")
             st.latex(r"""
@@ -179,17 +190,67 @@ if analyze_btn and entity_query:
             """)
             st.write("We weight **Confidence** (how sure the model is) higher than **Volume** (how many articles), preventing a single viral false-positive from ruining a risk profile.")
             
-            st.markdown("#### 3. Classification Probabilities")
-            st.write("Sample of raw model output for the top article:")
-            if risk_evidence:
-                top_article = risk_evidence[0]
-                cols = st.columns(3)
-                cols[0].metric("Detected Class", top_article['predicted_risk'].upper())
-                cols[1].metric("Confidence", f"{top_article['confidence']:.4f}")
-                cols[2].metric("Vector Features", "1,024 (TF-IDF)")
-
-        # --- TAB 3: DIFFERENTIATION ---
+        # --- TAB 3: MODEL QUALITY (VP VIEW) ---
         with tab3:
+            st.subheader("Model Performance Assessment")
+            st.caption("Training Set Evaluation (1,000 Synthetic Samples)")
+            
+            report, cm, classes = engine.get_model_performance()
+            
+            # Metrics Row
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Macro Precision", f"{report['macro avg']['precision']:.2f}", help="Avg precision across all typologies")
+            m2.metric("Macro Recall", f"{report['macro avg']['recall']:.2f}", help="Avg recall across all typologies")
+            m3.metric("Macro F1-Score", f"{report['macro avg']['f1-score']:.2f}", help="Harmonic mean of P & R") # Fixed key name
+            
+            st.divider()
+            
+            c1, c2 = st.columns([2,1])
+            with c1:
+                st.markdown("#### Confusion Matrix")
+                st.caption("Where does the model get confused?")
+                
+                # Plot Confusion Matrix with Altair
+                # Transform CM to long format for Altair
+                cm_data = []
+                for i, row in enumerate(cm):
+                    for j, val in enumerate(row):
+                         cm_data.append({"Actual": classes[i], "Predicted": classes[j], "Count": val})
+                cm_df = pd.DataFrame(cm_data)
+                
+                chart_cm = alt.Chart(cm_df).mark_rect().encode(
+                    x='Predicted:O',
+                    y='Actual:O',
+                    color='Count:Q',
+                    tooltip=['Actual', 'Predicted', 'Count']
+                ).properties(height=400)
+                
+                text_cm = chart_cm.mark_text(baseline='middle').encode(
+                    text='Count:Q',
+                    color=alt.value('black')
+                )
+                
+                st.altair_chart(chart_cm + text_cm, use_container_width=True)
+                
+            with c2:
+                st.markdown("#### Operating Point")
+                st.info("Adjusting the confidence threshold shifts the operating point along the PR curve.")
+                st.slider("Simulation: Threshold", 0.0, 1.0, 0.55, disabled=True, help="This is tied to the main analyst control.")
+                
+                st.markdown("#### Class-Level F1 Scores")
+                # Simple bar chart for F1 per class
+                f1_data = [{"Class": k, "F1": v['f1-score']} for k,v in report.items() if k not in ['accuracy', 'macro avg', 'weighted avg']]
+                f1_df = pd.DataFrame(f1_data)
+                
+                bar_chart = alt.Chart(f1_df).mark_bar().encode(
+                    x=alt.X('F1:Q', scale=alt.Scale(domain=[0,1])),
+                    y=alt.Y('Class:O', sort='-x'),
+                    color=alt.Color('F1:Q', scale=alt.Scale(scheme='greens'))
+                )
+                st.altair_chart(bar_chart, use_container_width=True)
+
+        # --- TAB 4: DIFFERENTIATION ---
+        with tab4:
             st.subheader("🚀 Why This is Different")
             
             c1, c2 = st.columns(2)

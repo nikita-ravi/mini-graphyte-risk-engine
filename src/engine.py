@@ -166,10 +166,50 @@ class MiniGraphyteEngine:
         sorted_typologies = sorted(typology_counts.items(), key=lambda x: x[1], reverse=True)
         top_typologies = [t[0] for t in sorted_typologies]
         
-        return {
-            "entity": entity_name,
-            "risk_score": risk_score,
-            "top_typologies": top_typologies,
-            "evidence": evidence_list,
-            "summary": f"Analyzed {len(raw_articles)} articles."
-        }
+    def get_model_performance(self):
+        """
+        Returns classification report and confusion matrix on training data.
+        """
+        train_path = f"{self.data_dir}/training_data.csv"
+        df = pd.read_csv(train_path)
+        
+        X = self.vectorizer.transform(df['text'])
+        y_true = df['label']
+        y_pred = self.model.predict(X)
+        
+        from sklearn.metrics import classification_report, confusion_matrix
+        report = classification_report(y_true, y_pred, output_dict=True)
+        cm = confusion_matrix(y_true, y_pred, labels=self.model.classes_)
+        
+        return report, cm, self.model.classes_
+
+    def explain_prediction(self, text_snippet, predicted_class):
+        """
+        Returns the top 5 contributing tokens for a specific prediction using coefficients.
+        Simple 'LIME-lite' for linear models.
+        """
+        if predicted_class == 'neutral':
+            return []
+            
+        class_idx = list(self.model.classes_).index(predicted_class)
+        # Get coefficients for this class: shape (n_features,)
+        # Logic: We multiply the coeff by the tf-idf value of the token in this specific doc
+        
+        feature_names = np.array(self.vectorizer.get_feature_names_out())
+        coefs = self.model.coef_[class_idx]
+        
+        # Transform just this text
+        tfidf_vector = self.vectorizer.transform([text_snippet]).toarray()[0]
+        
+        # Element-wise multiplication to see contribution of each word in THIS document
+        contributions = coefs * tfidf_vector
+        
+        # Get top indices
+        top_indices = contributions.argsort()[::-1][:4] # Top 4 words
+        
+        explanations = []
+        for idx in top_indices:
+            if contributions[idx] > 0: # Only positive contributors
+                explanations.append(f"{feature_names[idx]} (+{contributions[idx]:.2f})")
+                
+        return explanations
