@@ -165,8 +165,14 @@ class MiniGraphyteEngine:
         # 4. Top Typologies
         sorted_typologies = sorted(typology_counts.items(), key=lambda x: x[1], reverse=True)
         top_typologies = [t[0] for t in sorted_typologies]
-        
-    def get_model_performance(self):
+        return {
+            "entity": entity_name,
+            "risk_score": risk_score,
+            "top_typologies": top_typologies,
+            "evidence": evidence_list,
+            "summary": f"Analyzed {len(raw_articles)} articles."
+        }
+
         """
         Returns classification report and confusion matrix on training data.
         """
