@@ -173,6 +173,7 @@ class MiniGraphyteEngine:
             "summary": f"Analyzed {len(raw_articles)} articles."
         }
 
+    def get_model_performance(self):
         """
         Returns classification report and confusion matrix on training data.
         """
