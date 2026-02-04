@@ -1,10 +1,11 @@
 pandas
 numpy
 scikit-learn
-streamlit
+streamlit>=1.53.0
 joblib
 faker
-altair
+altair>=5.0.0
 duckduckgo-search
 beautifulsoup4
 requests
+watchdog
