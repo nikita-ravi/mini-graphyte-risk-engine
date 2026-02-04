@@ -53,6 +53,26 @@ $$ Score = (Confidence_{avg} \times 0.5) + (log(Volume) \times 0.3) + (Recency \
 - **Confidence Priority**: A low-confidence hit (e.g., rumor) contributes less than a high-confidence match (e.g., DOJ Press Release).
 - **Volume Dampening**: We use a logarithmic scale for article count so that a viral story with 1,000 links doesn't break the scale compared to a story with 10 links.
 
+## 🏭 Production Data Flow (Conceptual)
+While this demo runs in-memory with Python, a production implementation at Graphyte scale would utilize distributed compute:
+
+1.  **Ingestion**: Spark Streaming jobs ingest daily article batches (GDELT / NewsAPI).
+2.  **Filtering**: SQL logic filters candidate entities based on Watchlist matches.
+3.  **Enrichment**: A Spark UDF applies the `MiniGraphyteEngine` vectorization and inference logic in parallel.
+4.  **Aggregation**: Risk scores are aggregated at the `EntityID` level and written to a high-throughput store (e.g., ElasticSearch) for analyst retrieval.
+
+## 🧠 LLMs vs Classical NLP in Regulated Environments
+This project deliberately chooses **TF-IDF + Logistic Regression** over Large Language Models (LLMs) for the core classification task.
+
+| Feature | TF-IDF + Logistic Regression | LLM (GPT-4 / Llama) |
+|:---|:---|:---|
+| **Explainability** | **High** (Exact feature coefficients) | Low (Black box attention weights) |
+| **Auditability** | **Full** (Deterministic output) | Low (Non-deterministic) |
+| **Speed/Cost** | Microseconds / Free | Seconds / Expensive |
+| **Hallucination** | **Zero** (Cannot invent text) | Risk of fabrication |
+
+*LLMs are reserved here for simpler tasks like summarization or generating synthetic training data, not for the critical path of risk decisioning.*
+
 ## 🚀 Getting Started locally
 
 1. **Install Dependencies**
