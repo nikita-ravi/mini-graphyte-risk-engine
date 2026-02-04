@@ -53,7 +53,7 @@ with st.sidebar:
         """)
 
 # --- Main Logic ---
-@st.cache_resource
+# Removed cache to prevent stale class definition errors during development
 def get_engine():
     return MiniGraphyteEngine()
 

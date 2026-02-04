@@ -68,6 +68,8 @@ class MiniGraphyteEngine:
         
         results = []
         try:
+            import time
+            time.sleep(1.0) # Respect rate limits
             with DDGS() as ddgs:
                 ddgs_news = list(ddgs.news(query, max_results=limit))
                 
@@ -81,6 +83,7 @@ class MiniGraphyteEngine:
                     })
         except Exception as e:
             print(f"Error fetching news: {e}")
+            # Non-blocking error: return empty list so the app doesn't crash
             return []
             
         return results
