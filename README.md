@@ -17,64 +17,55 @@ This project is a functional prototype of such a system, built to demonstrate th
 | **Scoring** | Count of hits | Multi-factor Risk Score (Volume + Severity + Recency) |
 | **Output** | List of links | Explainable Audit Trail |
 
-## 🧩 Architecture
+## 🧩 Technical Architecture
+
+This engine operates as a real-time OSINT (Open Source Intelligence) pipeline. It does not rely on a static database but instead acts as a search-engine wrapper that applies a "Risk Layer" on top of live web results.
 
 ```mermaid
 graph TD
-    A[User Input: Entity Name] --> B{Entity Resolution Layer}
-    B -->|Normalize & Dedup| C[Adverse Media Collection]
-    C -->|Extract Snippets| D[ML Classification Engine]
-    D -->|TF-IDF + LogReg| E[Risk Typology Detection]
-    E --> F[Scoring Algorithm]
-    F --> G[Analyst Dashboard (Streamlit)]
+    A[User Input: "Sam Bankman-Fried"] -->|DuckDuckGo Search| B[Live Web Index]
+    B -->|Fetch 10 Latest News| C[Raw Snippet Ingestion]
+    C -->|Vectorize (TF-IDF)| D[Inference Engine]
+    D -->|Logistic Regression| E[Risk Classification]
+    E -->|Scoring Algorithm| F[Final Risk Profile]
 ```
 
-### 1. Entity Resolution
-Includes a normalization layer that handles:
-- Case sensitivity & Punctuation
-- Legal entity suffix removal (`Ltd`, `LLC`, `Corp`) for fuzzier matching
-- Name variation handling
+### 1. Data Ingestion (Real-Time)
+- **Source**: DuckDuckGo Instant Answers API (via `duckduckgo_search`).
+- **Logic**: The system queries `"{ENTITY_NAME} news"` to retrieve the most recent 10-20 indexed articles.
+- **Privacy**: No API keys or login required; fully stateless execution.
 
-### 2. Risk Typology Classification
-Instead of a "black box" LLM, this system uses a **TF-IDF + Logistic Regression** pipeline.
-- **Why?** In regulated environments (AML/KYC), explainability is non-negotiable. We need to know *exactly* which tokens triggered a "Money Laundering" flag to satisfy auditors.
-- **Classes:** `Sanctions`, `Fraud`, `Money Laundering`, `Corruption`, `Human Trafficking`, `Financial Distress`, `Neutral`.
+### 2. The Machine Learning Core
+The model is a **Logistic Regression** classifier trained on a proprietary synthetic dataset of 1,000+ AML-specific sentences.
+- **Vectorization**: `TfidfVectorizer` (vocabulary size: 1,000) captures high-signal tokens like *"indicted"*, *"sanctioned"*, *"bribes"*, while ignoring noise.
+- **Explainability**: Unlike Neural Networks, we can inspect the model coefficients to see *strictly* why a sentence was flagged (e.g., the token "cartel" adds +2.4 log-odds to the "Money Laundering" class).
+- **Classes**:
+    - `Critical`: Sanctions, Money Laundering
+    - `High`: Fraud, Corruption, Human Trafficking
+    - `Medium`: Financial Distress
+    - `Low`: Neutral (Business news, Hiring, etc.)
 
-### 3. Risk Scoring Factors
-The final risk score (0-100) is calculated using a transparent formula prioritizing confidence and severity:
+### 3. Risk Scoring Algorithm
+We use a composite score (0-100) to assist analysts in prioritization. It is **not** a black-box average.
 
 $$ Score = (Confidence_{avg} \times 0.5) + (log(Volume) \times 0.3) + (Recency \times 0.2) $$
 
-## 🛠️ Project Structure
+- **Confidence Priority**: A low-confidence hit (e.g., rumor) contributes less than a high-confidence match (e.g., DOJ Press Release).
+- **Volume Dampening**: We use a logarithmic scale for article count so that a viral story with 1,000 links doesn't break the scale compared to a story with 10 links.
 
-```
-mini-graphyte-risk-intelligence/
-├── data/                  # Synthetic Article Database & Training Data
-├── src/
-│   ├── engine.py          # Core logic: Resolution, Inference, Scoring
-│   └── data_generator.py  # Utility to simulate open-source media environment
-├── app.py                 # Streamlit Analyst Dashboard
-├── requirements.txt       # Dependencies
-└── README.md              # Documentation
-```
-
-## 🚀 Getting Started
+## 🚀 Getting Started locally
 
 1. **Install Dependencies**
    ```bash
    pip install -r requirements.txt
    ```
 
-2. **Generate Data & Train Model**
-   (First run only - creates synthetic OSINT database)
-   ```bash
-   python src/data_generator.py
-   ```
-
-3. **Launch Analyst Dashboard**
+2. **Run the Application**
    ```bash
    streamlit run app.py
    ```
+   *Note: The first run will check for the pre-trained `data/risk_model.pkl`. If missing, it will auto-regenerate it using the built-in synthetic trainer.*
+
 
 ## ⚖️ Limitations & Scaling
 This is a prototype. In a production environment (like Graphyte), the following upgrades would apply:
